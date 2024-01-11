@@ -115,10 +115,23 @@ inline static void ws2812_init(uint offset) {
         ws2812->dma = dma_claim_unused_channel(true);
         ws2812->followfm = true;
         for (int j = 0; j < MAX_PIXELS_PER_STRIP; j++) {
-            if (j < 8)
-                ws2812->pixels[j] = rgb_u32(0x00, 0x22 * i, 0xFF);
-            else
-                ws2812->pixels[j] = rgb_u32(0x00, 0x00, 0x00);
+            switch (i) {
+                case 0:
+                    ws2812->pixels[j] = rgb_u32(0xFF, 0x00, 0x00);
+                    break;
+                case 1:
+                    ws2812->pixels[j] = rgb_u32(0x00, 0xFF, 0x00);
+                    break;
+                case 2:
+                    ws2812->pixels[j] = rgb_u32(0x00, 0x00, 0xFF);
+                    break;
+                default: 
+                    if (j >= 3 && j < 8)
+                        ws2812->pixels[j] = rgb_u32(0x00, 0x22 * i, 0xFF);
+                    else
+                        ws2812->pixels[j] = rgb_u32(0x00, 0x00, 0x00);
+                    break;
+            }
         }
 
         ws2812_program_init(ws2812->pio, ws2812->sm, offset, ws2812->gpio, 800000, IS_RGBW);
