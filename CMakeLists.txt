@@ -26,7 +26,7 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(MAVLink_Lights)
-target_sources(MAVLink_Lights PRIVATE MAVLink_Lights.cpp)
+target_sources(MAVLink_Lights PRIVATE MAVLink_Lights.c)
 
 pico_set_program_name(MAVLink_Lights "MAVLink_Lights")
 pico_set_program_version(MAVLink_Lights "0.1")

@@ -11,17 +11,20 @@
 
 #include "flight_mode.h"
 
-constexpr uint8_t BUTTON_POWER = 2; // Set Low Turn Off Lights
-constexpr uint8_t BUTTON_TESTn = 3; // Set Low Test (All On) Lights
-constexpr uint8_t LED_POWER = 25; // Power LED (Pico LED)
+#define BUTTON_POWER 2 // Set Low Turn Off Lights (TODO)
+#define BUTTON_TESTn 3 // Set Low Test (All On) Lights (TODO)
+#define LED_POWER   25 // Power LED (Pico LED)
 
-constexpr uint8_t UART1_TX_PIN = 4;
-constexpr uint8_t UART1_RX_PIN = 5;
+#define UART1_TX_PIN 4
+#define UART1_RX_PIN 5
 
-constexpr uint8_t MAVLINK_PIXEL_ARRAY_SIZE = 8;
-constexpr uint8_t MAX_PIXELS_PER_STRIP = 32;  // Power of 2
-constexpr uint8_t MAX_STRIPS = 8; // 8 or less
-constexpr bool IS_RGBW = false;
+#define MAVLINK_PIXEL_ARRAY_SIZE 8
+#define MAX_PIXELS_PER_STRIP 32  // Power of 2
+#define MAX_STRIPS 8 // 8 or less
+#define IS_RGBW false
+
+#define MAVLINK_SYS_ID 1
+#define MAVLINK_COMP_ID 134
 
 inline static void buttons_init();
 inline static void io_init();
@@ -32,7 +35,7 @@ typedef struct WS2812 {
     uint8_t gpio;
     uint8_t dma;
 
-    bool followfm = false;
+    bool followfm;
 
     _Alignas(MAX_PIXELS_PER_STRIP * sizeof(uint32_t)) 
         uint32_t pixels[MAX_PIXELS_PER_STRIP];
@@ -57,7 +60,7 @@ int main() {
     buttons_init();
     io_init();
 
-    queue_init(&msg_queue, sizeof(mavlink_message_t), 16);
+    queue_init(&msg_queue, sizeof(mavlink_message_t), 64);
     mutex_init(&ws2812_mutex);
 
     struct repeating_timer msg_timer;
@@ -71,8 +74,8 @@ int main() {
     struct repeating_timer ws2812_timer;
     add_repeating_timer_ms(-20, ws2812_render, NULL, &ws2812_timer);
 
-    multicore_launch_core1(queue_read);
-    queue_write();
+    multicore_launch_core1(queue_write);
+    queue_read();
 
     return 0;
 }
@@ -110,6 +113,7 @@ inline static void ws2812_init(uint offset) {
         ws2812->sm = pio_claim_unused_sm(ws2812->pio, true);
         ws2812->gpio = 6 + i;
         ws2812->dma = dma_claim_unused_channel(true);
+        ws2812->followfm = false;
         for (int j = 0; j < MAX_PIXELS_PER_STRIP; j++) {
             if (j < 8)
                 ws2812->pixels[j] = rgb_u32(0x00, 0x22 * i, 0xFF);
@@ -130,7 +134,9 @@ void queue_read() {
         while ( gpio_get(BUTTON_POWER) == true ) {
             c = uart_getc(uart1);
             if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
-                if (msg.msgid == MAVLINK_MSG_ID_LED_STRIP_CONFIG || msg.msgid == MAVLINK_MSG_ID_HEARTBEAT)
+                if (msg.msgid == MAVLINK_MSG_ID_LED_STRIP_CONFIG)
+                    queue_add_blocking(&msg_queue, &msg);
+                else if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT && msg.sysid == MAVLINK_SYS_ID && msg.compid == 1)
                     queue_add_blocking(&msg_queue, &msg);
             }
         }
@@ -223,106 +229,111 @@ void queue_write() {
 
             printf("\n");
 
-            uint8_t main_mode = hb.custom_mode & 0xFF;
-            uint8_t sub_mode = hb.custom_mode >> 8;
+            union px4_custom_mode custom_mode;
+            custom_mode.data = hb.custom_mode;
+
+            uint8_t main_mode = custom_mode.main_mode;
+            uint8_t sub_mode = custom_mode.sub_mode;
 
             printf("Main Mode: %d\n", main_mode);
             printf("Sub Mode: %d\n", sub_mode);
 
             printf("\n");
 
-            uint32_t color = 0x000000;
+            if (msg.sysid == MAVLINK_SYS_ID && msg.compid == 1) {
+                uint32_t color = 0x000000;
 
-            switch (main_mode) {
-                case PX4_CUSTOM_MAIN_MODE_MANUAL:
-                    color = 0xCD5C5C;
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_ALTCTL:
-                    color = 0xD2691E;
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_POSCTL:
-                    switch (sub_mode) {
-                        case PX4_CUSTOM_SUB_MODE_POSCTL_POSCTL:
-                            color = 0x0000FF;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_POSCTL_ORBIT:
-                            color = 0xA020F0;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_POSCTL_SLOW:
-                            color = 0x9370DB;
-                            break;
-                        default:
-                            color = 0xFFFFFF;
-                            break;
-                    }
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_AUTO:
-                    switch (sub_mode) {
-                        case PX4_CUSTOM_SUB_MODE_AUTO_READY:
-                            color = 0xFFFFFF;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF:
-                            color = 0xFFA07A;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_AUTO_LOITER:
-                            color = 0xFF8C00;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_AUTO_MISSION:
-                            color = 0x00FF00;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_AUTO_RTL:
-                            color = 0x00FFFF;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_AUTO_LAND:
-                            color = 0x0000FF;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_AUTO_RESERVED_DO_NOT_USE:
-                            color = 0x000000;
-                            break;
-                        case PX4_CUSTOM_SUB_MODE_AUTO_FOLLOW_TARGET:
-                            color = 0x000000;
-                            break;
-                        default:
-                            color = 0xFFFFFF;
-                            break;
-                    }
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_ACRO:
-                    color = 0x000000;
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_OFFBOARD:
-                    color = 0x000000;
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_STABILIZED:
-                    color = 0x000000;
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_RATTITUDE_LEGACY:
-                    color = 0x000000;
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_SIMPLE:
-                    color = 0x000000;
-                    break;
-                case PX4_CUSTOM_MAIN_MODE_TERMINATION:
-                    color = 0x000000;
-                    break;
-                default:
-                    color = 0xFFFFFF;
-                    break;
-            }
-
-            printf("Color: %08X\n", color);
-
-            printf("\n");
-
-            for (int i = 0; i < MAX_STRIPS; i++) {
-                WS2812_t *ws2812 = &ws2812s[i];
-                mutex_enter_blocking(&ws2812_mutex);
-                if (ws2812->followfm) {
-                    for (int j = 0; j < MAX_PIXELS_PER_STRIP; j++) {
-                        ws2812->pixels[j] = rgb32_u32(color);
-                    }
+                switch (main_mode) {
+                    case PX4_CUSTOM_MAIN_MODE_MANUAL:
+                        color = 0xFF0000; // Red
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_ALTCTL:
+                        color = 0xD2691E; // Chocolate
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_POSCTL:
+                        switch (sub_mode) {
+                            case PX4_CUSTOM_SUB_MODE_POSCTL_POSCTL:
+                                color = 0x0000FF; // Blue
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_POSCTL_ORBIT:
+                                color = 0xA020F0; // Purple
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_POSCTL_SLOW:
+                                color = 0x9370DB; // MediumPurple
+                                break;
+                            default:
+                                color = 0xFFFFFF;
+                                break;
+                        }
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_AUTO:
+                        switch (sub_mode) {
+                            case PX4_CUSTOM_SUB_MODE_AUTO_READY:
+                                color = 0x00FF8F; // SpringGreen
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF:
+                                color = 0xFFA07A; // LightSalmon
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_AUTO_LOITER:
+                                color = 0xFF8C00; // DarkOrange
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_AUTO_MISSION:
+                                color = 0x00FF00; // Green
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_AUTO_RTL:
+                                color = 0x00FFFF; // Cyan
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_AUTO_LAND:
+                                color = 0xFFA500; // Orange
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_AUTO_RESERVED_DO_NOT_USE:
+                                color = 0x000000; 
+                                break;
+                            case PX4_CUSTOM_SUB_MODE_AUTO_FOLLOW_TARGET:
+                                color = 0x98FB98; // PaleGreen
+                                break;
+                            default:
+                                color = 0xFFFFFF;
+                                break;
+                        }
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_ACRO:
+                        color = 0xFF69B4; // HotPink
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_OFFBOARD:
+                        color = 0xFFFF00; // Yellow
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_STABILIZED:
+                        color = 0xCD5C5C; // IndianRed
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_RATTITUDE_LEGACY:
+                        color = 0xFFFFFF;
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_SIMPLE:
+                        color = 0xFFFFFF;
+                        break;
+                    case PX4_CUSTOM_MAIN_MODE_TERMINATION:
+                        color = 0xFFFFFF;
+                        break;
+                    default:
+                        color = 0xFFFFFF;
+                        break;
                 }
-                mutex_exit(&ws2812_mutex);
+
+                printf("Color: %08X\n", color);
+
+                printf("\n");
+
+                for (int i = 0; i < MAX_STRIPS; i++) {
+                    WS2812_t *ws2812 = &ws2812s[i];
+                    mutex_enter_blocking(&ws2812_mutex);
+                    if (ws2812->followfm) {
+                        for (int j = 0; j < MAX_PIXELS_PER_STRIP; j++) {
+                            ws2812->pixels[j] = rgb32_u32(color);
+                        }
+                    }
+                    mutex_exit(&ws2812_mutex);
+                }
             }
         }
     }
@@ -330,14 +341,21 @@ void queue_write() {
 
 bool send_heartbeat(struct repeating_timer *t) {
     mavlink_message_t msg;
-    mavlink_msg_heartbeat_pack(1, 1, &msg, MAV_TYPE_GENERIC, MAV_AUTOPILOT_PX4, MAV_MODE_FLAG_SAFETY_ARMED | MAV_MODE_FLAG_TEST_ENABLED, 0, MAV_STATE_STANDBY);
+    mavlink_msg_heartbeat_pack(
+        MAVLINK_SYS_ID, 
+        MAVLINK_COMP_ID, 
+        &msg, 
+        MAV_TYPE_ONBOARD_CONTROLLER, 
+        MAV_AUTOPILOT_INVALID, 
+        0, 0, 
+        MAV_STATE_STANDBY
+    );
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
 
     uart_write_blocking(uart1, buf, len);
     
-    printf("Heartbeat sent at %lld\n", time_us_64());
     return true;
 }
 
