@@ -113,7 +113,7 @@ inline static void ws2812_init(uint offset) {
         ws2812->sm = pio_claim_unused_sm(ws2812->pio, true);
         ws2812->gpio = 6 + i;
         ws2812->dma = dma_claim_unused_channel(true);
-        ws2812->followfm = false;
+        ws2812->followfm = true;
         for (int j = 0; j < MAX_PIXELS_PER_STRIP; j++) {
             if (j < 8)
                 ws2812->pixels[j] = rgb_u32(0x00, 0x22 * i, 0xFF);
@@ -156,6 +156,10 @@ void queue_write() {
 
             const char *mode_map[] = {"ALL", "INDEX", "FOLLOW_FLIGHT_MODE", "CLEAR"};
 
+            printf("Requested Target System: %d\n", config.target_system);
+
+            printf("Requested Target Component: %d\n", config.target_component);
+
             printf("Requested Fill Mode: %s\n", mode_map[config.fill_mode]);
             
             printf("Requested LED Strip ID: %d\n", config.strip_id);
@@ -169,49 +173,53 @@ void queue_write() {
 
             printf("\n");
 
-            uint i      = config.strip_id;
-            uint n      = config.led_index;
-            uint len    = config.length;
-            uint32_t *c = config.colors;
+            if (config.target_system == MAVLINK_SYS_ID) {
 
-            WS2812_t *ws2812 = &ws2812s[i];
+                uint i      = config.strip_id;
+                uint n      = config.led_index;
+                uint len    = config.length;
+                uint32_t *c = config.colors;
 
-            mutex_enter_blocking(&ws2812_mutex);
+                WS2812_t *ws2812 = &ws2812s[i];
 
-            switch (config.fill_mode) {
-                case 0:
-                    ws2812->followfm = false;
-                    for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
-                        ws2812->pixels[i] = rgb32_u32(c[0]);
-                    }
-                    break;
-                case 1:
-                    if (ws2812->followfm) {
+                mutex_enter_blocking(&ws2812_mutex);
+
+                switch (config.fill_mode) {
+                    case 0:
+                        ws2812->followfm = false;
+                        for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
+                            ws2812->pixels[i] = rgb32_u32(c[0]);
+                        }
+                        break;
+                    case 1:
+                        if (ws2812->followfm) {
+                            ws2812->followfm = false;
+                            for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
+                                ws2812->pixels[i] = rgb_u32(0x00, 0x00, 0x00);
+                            }
+                        }
+                        for (int i = 0; i < len && (i + n) < MAX_PIXELS_PER_STRIP; i++) {
+                            ws2812->pixels[i + n] = rgb32_u32(c[i]);
+                        }
+                        break;
+                    case 2:
+                        for (int i = 0; i < MAX_STRIPS; i++) {
+                            ws2812s[i].followfm = true;
+                        }
+                        break;
+                    case 3:
                         ws2812->followfm = false;
                         for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
                             ws2812->pixels[i] = rgb_u32(0x00, 0x00, 0x00);
                         }
-                    }
-                    for (int i = 0; i < len && (i + n) < MAX_PIXELS_PER_STRIP; i++) {
-                        ws2812->pixels[i + n] = rgb32_u32(c[i]);
-                    }
-                    break;
-                case 2:
-                    for (int i = 0; i < MAX_STRIPS; i++) {
-                        ws2812s[i].followfm = true;
-                    }
-                    break;
-                case 3:
-                    ws2812->followfm = false;
-                    for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
-                        ws2812->pixels[i] = rgb_u32(0x00, 0x00, 0x00);
-                    }
-                    break;
-                default:
-                    break;
-            }
+                        break;
+                    default:
+                        break;
+                }
 
-            mutex_exit(&ws2812_mutex);
+                mutex_exit(&ws2812_mutex);
+
+            }
 
         } else if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
             printf("Received message with ID %d, sequence: %d from component %d of system %d\n",
