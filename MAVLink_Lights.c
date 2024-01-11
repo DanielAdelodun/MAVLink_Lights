@@ -304,7 +304,7 @@ void queue_write() {
                         color = 0xFFFF00; // Yellow
                         break;
                     case PX4_CUSTOM_MAIN_MODE_STABILIZED:
-                        color = 0xCD5C5C; // IndianRed
+                        color = 0xFF0000; // Red
                         break;
                     case PX4_CUSTOM_MAIN_MODE_RATTITUDE_LEGACY:
                         color = 0xFFFFFF;
