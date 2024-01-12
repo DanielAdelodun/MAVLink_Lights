@@ -26,7 +26,6 @@
 #define MAVLINK_SYS_ID 1
 #define MAVLINK_COMP_ID 134
 
-inline static void buttons_init();
 inline static void io_init();
 
 typedef struct WS2812 {
@@ -46,8 +45,8 @@ static WS2812_t ws2812s[MAX_STRIPS];
 inline static uint32_t rgb_u32(const uint8_t red, const uint8_t green, const uint8_t blue);
 inline static uint32_t rgb32_u32(const uint32_t rgb);
 
-void queue_read();
 void queue_write();
+void queue_read();
 bool send_heartbeat(struct repeating_timer *t);
 bool ws2812_render(struct repeating_timer *t);
 
@@ -57,7 +56,6 @@ mutex_t ws2812_mutex;
 int main() {
     stdio_init_all();
 
-    buttons_init();
     io_init();
 
     queue_init(&msg_queue, sizeof(mavlink_message_t), 64);
@@ -68,30 +66,15 @@ int main() {
 
     uint offset = pio_add_program(pio0, &ws2812_program);
     pio_add_program_at_offset(pio1, &ws2812_program, offset);
-
     ws2812_init(offset);
 
     struct repeating_timer ws2812_timer;
     add_repeating_timer_ms(-20, ws2812_render, NULL, &ws2812_timer);
 
-    multicore_launch_core1(queue_write);
-    queue_read();
+    multicore_launch_core1(queue_read);
+    queue_write();
 
     return 0;
-}
-
-inline static void buttons_init() {
-    gpio_init(BUTTON_POWER);
-    gpio_set_dir(BUTTON_POWER, GPIO_IN);
-    gpio_pull_up(BUTTON_POWER);
-
-    gpio_init(BUTTON_TESTn);
-    gpio_set_dir(BUTTON_TESTn, GPIO_IN);
-    gpio_pull_up(BUTTON_TESTn);
-
-    gpio_init(LED_POWER);
-    gpio_set_dir(LED_POWER, GPIO_OUT);
-    gpio_put(LED_POWER, 1);
 }
 
 inline static void io_init() {
@@ -100,13 +83,13 @@ inline static void io_init() {
     uart_init(uart1, 115200);
     gpio_set_function(UART1_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(UART1_RX_PIN, GPIO_FUNC_UART);
-
+#ifdef DEBUG
     puts("Hello From UART0 (stdin)!");
     uart_puts(uart1, "Hello From UART1 (mavlink)!\n");
+#endif
 }
 
 inline static void ws2812_init(uint offset) {
-
     for (int i = 0; i < MAX_STRIPS; i++) {
         WS2812_t *ws2812 = &ws2812s[i];
         ws2812->pio = (i < 4) ? pio0 : pio1;
@@ -133,18 +116,17 @@ inline static void ws2812_init(uint offset) {
                     break;
             }
         }
-
         ws2812_program_init(ws2812->pio, ws2812->sm, offset, ws2812->gpio, 800000, IS_RGBW);
         ws2812_dma_init(ws2812->dma, ws2812->pio, ws2812->sm, MAX_PIXELS_PER_STRIP, ws2812->pixels);
     }
 }
 
-void queue_read() {
+void queue_write() {
     while (true) {
         mavlink_message_t msg;
         mavlink_status_t status;
         uint8_t c;
-        while ( gpio_get(BUTTON_POWER) == true ) {
+        while ( true ) {
             c = uart_getc(uart1);
             if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
                 if (msg.msgid == MAVLINK_MSG_ID_LED_STRIP_CONFIG)
@@ -156,44 +138,36 @@ void queue_read() {
     }
 }
 
-void queue_write() {
+void queue_read() {
     while (true) {
         mavlink_message_t msg;
         queue_remove_blocking(&msg_queue, &msg);
-        if (msg.msgid == MAVLINK_MSG_ID_LED_STRIP_CONFIG) {
-            printf("Received message with ID %d, sequence: %d from component %d of system %d\n",
-                msg.msgid, msg.seq, msg.compid, msg.sysid);
+        printf("Received message with ID %d, sequence: %d from component %d of system %d\n", 
+            msg.msgid, msg.seq, msg.compid, msg.sysid);
 
+        if (msg.msgid == MAVLINK_MSG_ID_LED_STRIP_CONFIG) {
             mavlink_led_strip_config_t config;
             mavlink_msg_led_strip_config_decode(&msg, &config);
-
+#ifdef DEBUG
             const char *mode_map[] = {"ALL", "INDEX", "FOLLOW_FLIGHT_MODE", "CLEAR"};
-
             printf("Requested Target System: %d\n", config.target_system);
-
             printf("Requested Target Component: %d\n", config.target_component);
-
             printf("Requested Fill Mode: %s\n", mode_map[config.fill_mode]);
-            
             printf("Requested LED Strip ID: %d\n", config.strip_id);
-
             printf("Requested LED Index: %d\n", config.led_index);
-
             printf("Requested Colors:\n");
             for (int i = 0; i < MAVLINK_PIXEL_ARRAY_SIZE; i++) {
                 printf(" LED %d: %08X\n", i, config.colors[i]);
             }
-
             printf("\n");
-
+#endif
             if (config.target_system == MAVLINK_SYS_ID) {
-
-                uint i      = config.strip_id;
-                uint n      = config.led_index;
-                uint len    = config.length;
+                uint8_t id     = config.strip_id;
+                uint8_t n      = config.led_index;
+                uint8_t len    = config.length;
                 uint32_t *c = config.colors;
 
-                WS2812_t *ws2812 = &ws2812s[i];
+                WS2812_t *ws2812 = &ws2812s[id];
 
                 mutex_enter_blocking(&ws2812_mutex);
 
@@ -235,31 +209,27 @@ void queue_write() {
             }
 
         } else if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
-            printf("Received message with ID %d, sequence: %d from component %d of system %d\n",
-                msg.msgid, msg.seq, msg.compid, msg.sysid);
-
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(&msg, &hb);
 
+#ifdef DEBUG
+            printf("Received Heartbeat:\n");
             printf("Type: %d\n", hb.type);
             printf("Autopilot: %d\n", hb.autopilot);
             printf("Base Mode: %08X\n", hb.base_mode);
             printf("Custom Mode: %08X\n", hb.custom_mode);
             printf("System Status: %d\n", hb.system_status);
             printf("Mavlink Version: %d\n", hb.mavlink_version);
-
-            printf("\n");
-
+#endif
             union px4_custom_mode custom_mode;
             custom_mode.data = hb.custom_mode;
 
             uint8_t main_mode = custom_mode.main_mode;
             uint8_t sub_mode = custom_mode.sub_mode;
-
+#ifdef DEBUG
             printf("Main Mode: %d\n", main_mode);
             printf("Sub Mode: %d\n", sub_mode);
-
-            printf("\n");
+#endif
 
             if (msg.sysid == MAVLINK_SYS_ID && msg.compid == 1) {
                 uint32_t color = 0x000000;
@@ -341,9 +311,10 @@ void queue_write() {
                         break;
                 }
 
+#ifdef DEBUG
                 printf("Color: %08X\n", color);
-
                 printf("\n");
+#endif
 
                 for (int i = 0; i < MAX_STRIPS; i++) {
                     WS2812_t *ws2812 = &ws2812s[i];
@@ -371,12 +342,9 @@ bool send_heartbeat(struct repeating_timer *t) {
         0, 0, 
         MAV_STATE_STANDBY
     );
-
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-
-    uart_write_blocking(uart1, buf, len);
-    
+    uart_write_blocking(uart1, buf, len);    
     return true;
 }
 

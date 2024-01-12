@@ -58,3 +58,8 @@ target_link_libraries(MAVLink_Lights
 
 pico_add_extra_outputs(MAVLink_Lights)
 
+if(CMAKE_BUILD_TYPE MATCHES Debug)
+    add_definitions(-DDEBUG)
+elseif(CMAKE_BUILD_TYPE MATCHES Release)
+    add_definitions(-DNDEBUG)
+endif()
