@@ -22,7 +22,7 @@ See the [RaspberryPi Pico Documentation](https://datasheets.raspberrypi.com/pico
 
 ## Usage
 You need a source of MAVLink LED Strip messages. `send_rgb.py` uses pymavlink. \
-You will need to [generate a custom dialect](https://mavlink.io/en/mavgen_python/) from the [message definitions]((https://github.com/DanielAdelodun/mavlink/blob/4572d651e692b19bdf09f8df81033451e7060399/message_definitions/v1.0/ledstrip.xml)).
+You will need to [generate a custom dialect](https://mavlink.io/en/mavgen_python/) from the [message definitions](https://github.com/DanielAdelodun/mavlink/blob/4572d651e692b19bdf09f8df81033451e7060399/message_definitions/v1.0/ledstrip.xml).
 
 See [here](https://github.com/DanielAdelodun/MAVSDK/tree/Lights/examples/lights) for example MAVSDK programs, built using the Lights plugin. \
 (The example uses an out-of-tree branch of MAVSDK, and a custom dialect).
