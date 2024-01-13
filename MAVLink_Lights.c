@@ -49,6 +49,7 @@ void queue_write();
 void queue_read();
 bool send_heartbeat(struct repeating_timer *t);
 bool ws2812_render(struct repeating_timer *t);
+void configure_led_strip(WS2812_t *ws2812, mavlink_led_strip_config_t *config);
 
 queue_t msg_queue;
 mutex_t ws2812_mutex;
@@ -162,56 +163,23 @@ void queue_read() {
             printf("\n");
 #endif
             if (config.target_system == MAVLINK_SYS_ID) {
-                uint8_t id     = config.strip_id;
-                uint8_t n      = config.led_index;
-                uint8_t len    = config.length;
-                uint32_t *c = config.colors;
-
-                WS2812_t *ws2812 = &ws2812s[id];
-
-                mutex_enter_blocking(&ws2812_mutex);
-
-                switch (config.fill_mode) {
-                    case 0:
-                        ws2812->followfm = false;
-                        for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
-                            ws2812->pixels[i] = rgb32_u32(c[0]);
-                        }
-                        break;
-                    case 1:
-                        if (ws2812->followfm) {
-                            ws2812->followfm = false;
-                            for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
-                                ws2812->pixels[i] = rgb_u32(0x00, 0x00, 0x00);
-                            }
-                        }
-                        for (int i = 0; i < len && (i + n) < MAX_PIXELS_PER_STRIP; i++) {
-                            ws2812->pixels[i + n] = rgb32_u32(c[i]);
-                        }
-                        break;
-                    case 2:
-                        for (int i = 0; i < MAX_STRIPS; i++) {
-                            ws2812s[i].followfm = true;
-                        }
-                        break;
-                    case 3:
-                        ws2812->followfm = false;
-                        for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
-                            ws2812->pixels[i] = rgb_u32(0x00, 0x00, 0x00);
-                        }
-                        break;
-                    default:
-                        break;
+                if (config.strip_id == UINT8_MAX) {
+                    for (int i = 0; i < MAX_STRIPS; i++) {
+                        configure_led_strip(&ws2812s[i], &config);
+                        continue;
+                    }
                 }
-
-                mutex_exit(&ws2812_mutex);
-
+                if (config.strip_id >= MAX_STRIPS) {
+#ifdef DEBUG
+                    printf("Invalid LED Strip ID. Max is: %d\n", MAX_STRIPS - 1);
+#endif
+                    continue;
+                }
+                configure_led_strip(&ws2812s[config.strip_id], &config);
             }
-
         } else if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(&msg, &hb);
-
 #ifdef DEBUG
             printf("Received Heartbeat:\n");
             printf("Type: %d\n", hb.type);
@@ -373,3 +341,46 @@ static inline uint32_t rgb32_u32(const uint32_t rgb) {
     return rgb_u32(r, g, b);
 }
 
+void configure_led_strip(WS2812_t *ws2812, mavlink_led_strip_config_t *config) {
+    uint8_t  id         = config->strip_id;
+    uint8_t  led_index  = config->led_index;
+    uint8_t  length     = config->length;
+    uint32_t *colors    = config->colors;
+
+    mutex_enter_blocking(&ws2812_mutex);
+
+    switch (config->fill_mode) {
+        case LED_FILL_MODE_ALL:
+            ws2812->followfm = false;
+            for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
+                ws2812->pixels[i] = rgb32_u32(colors[0]);
+            }
+            break;
+        case LED_FILL_MODE_INDEX:
+            if (ws2812->followfm) {
+                ws2812->followfm = false;
+                for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
+                    ws2812->pixels[i] = rgb_u32(0x00, 0x00, 0x00);
+                }
+            }
+            for (int i = 0; i < length && (i + led_index) < MAX_PIXELS_PER_STRIP; i++) {
+                ws2812->pixels[i + led_index] = rgb32_u32(colors[i]);
+            }
+            break;
+        case LED_FILL_MODE_FOLLOW_FLIGHT_MODE:
+            for (int i = 0; i < MAX_STRIPS; i++) {
+                ws2812s[i].followfm = true;
+            }
+            break;
+        case LED_FILL_MODE_CLEAR:
+            ws2812->followfm = false;
+            for (int i = 0; i < MAX_PIXELS_PER_STRIP; i++) {
+                ws2812->pixels[i] = rgb_u32(0x00, 0x00, 0x00);
+            }
+            break;
+        default:
+            break;
+    }
+
+    mutex_exit(&ws2812_mutex);
+}
